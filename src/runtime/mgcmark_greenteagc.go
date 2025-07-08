@@ -676,9 +676,7 @@ func spanSetScans(spanBase uintptr, nelems uint16, imb *spanInlineMarkBits, toSc
 func scanObjectSmall(spanBase, b, objSize uintptr, gcw *gcWork) {
 	ptrBits := heapBitsSmallForAddrInline(spanBase, b, objSize)
 	gcw.heapScanWork += int64(sys.Len64(uint64(ptrBits)) * goarch.PtrSize)
-	nptrs := 0
-	n := sys.OnesCount64(uint64(ptrBits))
-	for range n {
+	for ptrBits != 0 {
 		k := sys.TrailingZeros64(uint64(ptrBits))
 		ptrBits &^= 1 << k
 		addr := b + uintptr(k)*goarch.PtrSize
@@ -687,14 +685,7 @@ func scanObjectSmall(spanBase, b, objSize uintptr, gcw *gcWork) {
 		// was chosen empirically.
 		sys.Prefetch(addr)
 
-		// N.B. ptrBuf is always large enough to hold pointers for an entire 1-page span.
-		gcw.ptrBuf[nptrs] = addr
-		nptrs++
-	}
-
-	// Process all the pointers we just got.
-	for _, p := range gcw.ptrBuf[:nptrs] {
-		p = *(*uintptr)(unsafe.Pointer(p))
+		p := *(*uintptr)(unsafe.Pointer(addr))
 		if p == 0 {
 			continue
 		}
@@ -707,13 +698,11 @@ func scanObjectSmall(spanBase, b, objSize uintptr, gcw *gcWork) {
 }
 
 func scanObjectsSmall(base, objSize uintptr, elems uint16, gcw *gcWork, scans *gc.ObjMask) {
-	nptrs := 0
 	for i, bits := range scans {
 		if i*(goarch.PtrSize*8) > int(elems) {
 			break
 		}
-		n := sys.OnesCount64(uint64(bits))
-		for range n {
+		for bits != 0 {
 			j := sys.TrailingZeros64(uint64(bits))
 			bits &^= 1 << j
 
@@ -721,8 +710,7 @@ func scanObjectsSmall(base, objSize uintptr, elems uint16, gcw *gcWork, scans *g
 			ptrBits := heapBitsSmallForAddrInline(base, b, objSize)
 			gcw.heapScanWork += int64(sys.Len64(uint64(ptrBits)) * goarch.PtrSize)
 
-			n := sys.OnesCount64(uint64(ptrBits))
-			for range n {
+			for ptrBits != 0 {
 				k := sys.TrailingZeros64(uint64(ptrBits))
 				ptrBits &^= 1 << k
 				addr := b + uintptr(k)*goarch.PtrSize
@@ -731,22 +719,15 @@ func scanObjectsSmall(base, objSize uintptr, elems uint16, gcw *gcWork, scans *g
 				// was chosen empirically.
 				sys.Prefetch(addr)
 
-				// N.B. ptrBuf is always large enough to hold pointers for an entire 1-page span.
-				gcw.ptrBuf[nptrs] = addr
-				nptrs++
-			}
-		}
-	}
-
-	// Process all the pointers we just got.
-	for _, p := range gcw.ptrBuf[:nptrs] {
-		p = *(*uintptr)(unsafe.Pointer(p))
-		if p == 0 {
-			continue
-		}
-		if !tryDeferToSpanScan(p, gcw) {
-			if obj, span, objIndex := findObject(p, 0, 0); obj != 0 {
-				greyobject(obj, 0, 0, span, gcw, objIndex)
+				p := *(*uintptr)(unsafe.Pointer(addr))
+				if p == 0 {
+					continue
+				}
+				if !tryDeferToSpanScan(p, gcw) {
+					if obj, span, objIndex := findObject(p, 0, 0); obj != 0 {
+						greyobject(obj, 0, 0, span, gcw, objIndex)
+					}
+				}
 			}
 		}
 	}
